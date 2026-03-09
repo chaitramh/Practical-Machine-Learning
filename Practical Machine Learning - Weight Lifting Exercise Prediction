@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning"
+author: "Chaithra"
+date: "3/9/2026"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = TRUE,
+                      fig.width = 8,
+                      fig.height = 5)
+
+# Load required packages
+library(tidyverse)     # dplyr, ggplot2, etc.
+library(caret)         # modeling & preprocessing
+library(randomForest)  # used by caret rf method
+library(rpart)         # simple decision tree
+library(rpart.plot)    # tree visualization
+
+# Training set
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training <- read.csv(url_train, na.strings = c("", "NA", "#DIV/0!"))
+
+# Very important: convert outcome to factor (prevents confusionMatrix error)
+training$classe <- as.factor(training$classe)
+
+# Test set (20 cases - no classe column)
+url_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing <- read.csv(url_test, na.strings = c("", "NA", "#DIV/0!"))
+
+dim(training)   # should be 19622 × 160
+dim(testing)    # should be 20 × 160
+
+ggplot(training, aes(x = classe)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Distribution of Activity Classes (A = correct, B–E = mistakes)",
+       x = "Classe", y = "Count") +
+  theme_minimal()
+
+# Identify columns that are >95% NA
+mostly_na <- colMeans(is.na(training)) > 0.95
+
+# Also remove first 7 metadata columns
+metadata_cols <- c("X", "user_name", "raw_timestamp_part_1",
+                   "raw_timestamp_part_2", "cvtd_timestamp",
+                   "new_window", "num_window")
+
+bad_cols <- names(training)[mostly_na | names(training) %in% metadata_cols]
+
+training_clean <- training %>% select(-all_of(bad_cols))
+testing_clean  <- testing  %>% select(-all_of(bad_cols))
+
+dim(training_clean)  # should be 19622 × 53 (incl classe)
+dim(testing_clean)   # 20 × 52
+
+set.seed(2025)
+
+inTrain <- createDataPartition(training_clean$classe, p = 0.70, list = FALSE)
+trainSet <- training_clean[inTrain, ]
+validSet <- training_clean[-inTrain, ]
+
+cat("Training set rows:", nrow(trainSet), "\n")
+cat("Validation set rows:", nrow(validSet), "\n")
+
+set.seed(123)
+
+tree_model <- rpart(classe ~ ., data = trainSet, method = "class")
+
+rpart.plot(tree_model, main = "Simple Decision Tree", extra = 101, under = TRUE)
+
+# Quick accuracy check
+pred_tree <- predict(tree_model, validSet, type = "class")
+confusionMatrix(pred_tree, validSet$classe)$overall["Accuracy"]
+
+set.seed(456)
+
+# Cross-validation control
+ctrl <- trainControl(method = "cv", 
+                     number = 5,
+                     allowParallel = TRUE)
+
+# Train random forest (tune mtry)
+rf_model <- train(classe ~ .,
+                  data = trainSet,
+                  method = "rf",
+                  ntree = 200,
+                  trControl = ctrl,
+                  tuneGrid = data.frame(mtry = c(2, 10, 27)),
+                  importance = TRUE)
+
+# Show results
+print(rf_model)
+
+# Final model details
+rf_model$finalModel
+
+pred_rf <- predict(rf_model, validSet)
+
+cm <- confusionMatrix(pred_rf, validSet$classe)
+print(cm)
+
+cat("Validation Accuracy:", round(cm$overall["Accuracy"] * 100, 2), "%\n")
+cat("Out-of-sample error estimate:", round((1 - cm$overall["Accuracy"]) * 100, 2), "%\n")
+
+plot(varImp(rf_model), top = 20, 
+     main = "Top 20 Most Important Variables (Random Forest)")
+
+predictions <- predict(rf_model, testing_clean)
+
+# Show results
+result <- data.frame(
+  problem_id = 1:20,
+  user_name  = testing$user_name,
+  predicted_classe = predictions
+)
+
+print(result)
+
+
+cat("Submission predictions:\n")
+cat(as.character(predictions), sep = "\n")
+
+
+```
